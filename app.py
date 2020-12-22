@@ -1,4 +1,4 @@
-#### Exploring linear models for prediction
+# Ozone at YVR and Abbotsford
 # -*- coding: utf-8 -*-
 
 # Run this app with `python app3.py` and
@@ -19,8 +19,6 @@ import dash_html_components as html
 # but this app needs to build plotly graph components separately 
 import plotly.graph_objects as go
 from dash.dependencies import Input, Output
-import numpy as np
-import pandas as pd
 
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 
@@ -31,196 +29,202 @@ app = dash.Dash(
     external_stylesheets=external_stylesheets
 )
 
-##################################
-# Fetch and prep the data
 # read in the data from the prepared CSV file. 
-co2_data_source = "./data/monthly_in_situ_co2_mlo.csv"
-co2_data_full = pd.read_csv(
-    co2_data_source, skiprows=np.arange(0, 56), na_values="-99.99"
-)
+# Data are assumed to be in the custom formatted CSV file `YVR and Abbotsford 2017.csv`, stored in the folder `data`. 
 
-co2_data_full.columns = [
-    "year", "month", "date_int", "date", "raw_co2", "seasonally_adjusted",
-    "fit", "seasonally_adjusted_fit", "co2 filled", "seasonally_adjusted_filled" 
-]
+all_O3 = pd.read_csv("./data/YVR and Abbotsford 2017.csv",index_col=0, parse_dates=['date_pst'])
 
-# for handling NaN's see https://pandas.pydata.org/pandas-docs/stable/user_guide/missing_data.html
-co2_data = co2_data_full.dropna()
+# rolling n-point moving average (hence the .mean()); data points are 1hr apart, hence 24/day or 168/wk.
+days = 7
+hrs = 24*days
+YVR_smoothed = all_O3.YVR_ppb.rolling(hrs, center=True, min_periods=6).mean() 
+Abb_smoothed = all_O3.Abbotsford_ppb.rolling(hrs, center=True, min_periods=6).mean() 
 
-# A linear model with slope and intercept to predict CO2
-def predict_co2(slope, intercept, initial_date, prediction_date):
-    a = slope * (prediction_date-initial_date) + intercept
-    
-    return a
+# add this as columns to the dataframe
+all_O3['YVR_smoothed']=YVR_smoothed
+all_O3['Abb_smoothed']=Abb_smoothed
 
-##################################
-# Lay out the page 
+# rolling 8hr moving "average" (hence the .mean()); points are 1hr apart
+yvr_8hr_O3 = all_O3.YVR_ppb.rolling(8,min_periods=6).mean()
+abb_8hr_O3 = all_O3.Abbotsford_ppb.rolling(8,min_periods=6).mean()
+
+# resample result by "day" (the 'D'), choosing the max value. 
+YVR_max8hrsavg=yvr_8hr_O3.resample('D').max()
+Abb_max8hrsavg=abb_8hr_O3.resample('D').max()
+
+# Dash starts by defining dashboard controls at the same time as 
+# placing them on the page using layout functions.
+# HTML can be used, but it's easier to just have Dash translate MarkDown.
+# For more control over layout, HTML and a chosen CSS template will be needed.
+# YVR = Vancouver airport
+# Abb = Abbotsford
+# MDA8 = maximum daily 8 hour average
+
 app.layout = html.Div([
-# Introduction
+# Start the page with introductory text and instructions.
     dcc.Markdown('''
-        ### Approximate linear models for CO2 at MonaLoa, Hawaii
-
-        #### Instructions 
-
-        Adjust straight line's slope and intercept to fit a "linear model" to the first 5 years of data, then again to most recent 5 years of data. 
-        Do these two linear approximations to the process predict the same CO2 concentration
-        for the year 2030? Predicted value in ppm is given in the plot title above the graph. 
-        _(NOTE: interactive graph controls appear when mouse is over the graph.)_
-
-        Smaller slope values "flatten" the line. Smaller line intercepts drop the line down. 
-        If the orange line is not visible display all data, bring line to roughly the right place
-        and then change to first or last 5 years of data to fine tune your linear fit. 
+        ### Ozone at two locations for all of 2017
+        #### Purpose: 
+        Plot two data sets with any combination of raw data, 7-day avg, or maximum daily 8-hr avg.  
         
+        #### Instructions
+        * Select timeseries to display using checkboxes. Dropdown sets trace type for Abb's data only ("markers" type plots slowly). 
+        * Zoom, pan, examine datapoint values, etc. using graph controls, upper right when your mouse is over the graph.
+        * Zoom the time-window only using 'click-and-hold' then drag horizontally and release. 
+        * Move the graphed window by clicking the "Pan" button. Reset using the the little **"home"** icon.
+        * YVR = Vancouver airport, Abb = Abbotsford and MDA8 = maximum daily 8 hour average.
+        ----------
         '''),
-    # controls for plot
     html.Div([
-        dcc.Markdown(''' **_Slope:_** '''),
-        dcc.Slider(
-            id='line_slope', min=0, max=3, step=0.05, value=2,
-            marks={0:'0', 0.5:'0.5', 1:'1', 1.5:'1.5', 2:'2', 2.5:'2.5', 3:'3'},
-            tooltip={'always_visible':True, 'placement':'topLeft'}
-        ),
-    ], style={'width': '48%', 'display': 'inline-block'}),
-    
-    html.Div([
-        dcc.Markdown(''' **_Intercept:_** '''),
-        dcc.Slider(
-            id='line_intcpt', min=250, max=320, step=0.25,value=312,
-            marks={250:'250', 260:'260', 270:'270', 280:'280', 290:'290', 300:'300', 310:'310', 320:'320'},
-            tooltip={'always_visible':True, 'placement':'topLeft'}
-        ),
-    ], style={'width': '48%', 'display': 'inline-block'}),
-    
-# start and end year of plot 
-# NOT NEEDED IF USING 1ST AND LAST 5 YEAR RADIO BUTTONS.   
-#    html.Div([
-#        dcc.Markdown(''' _Start:_ '''),
-#        dcc.Slider(
-#            id='start', min=1958, max=2019, step=1, value=1958,
-#            marks={1960:'1960', 1970:'1970', 1980:'1980', 1990:'1990', 2000:'2000', 2010:'2010',2020:'2020'},
-#            tooltip={'always_visible':True, 'placement':'topLeft'}
-#        ),
-#    ], style={'width': '48%', 'display': 'inline-block'}),
-#    
-#    html.Div([
-#        dcc.Markdown(''' _End (**> Start!**):_ '''),
-#        dcc.Slider(
-#            id='end', min=1960, max=2030, step=1, value=1963,
-#            marks={1960:'1960', 1970:'1970', 1980:'1980', 1990:'1990', 2000:'2000', 2010:'2010',2020:'2020'},
-#            tooltip={'always_visible':True, 'placement':'topLeft'}
-#        ),
-#    ], style={'width': '48%', 'display': 'inline-block'}),
+# CheckList can define all checkboxes together but then the logic becomes 
+# more awkward for this simple task. So each box is a separate CheckBox of this situation.
 
-    html.Div([
-        dcc.Markdown(''' **_Signal type:_** '''),
-         dcc.RadioItems(
-            id='Data_type',
+# Layout intention is to have 3 columns, 2 with checkboxes and a third with the dropdown.
+# result is not ideal (dropdown is too low).
+# The solution involves manipulating CSS but it is probably better to use BootStrap classes.
+# That can be pursued later as it is "cosmetics" not functionality.
+        dcc.Markdown('''
+        **Select YVR components**
+        '''),
+        dcc.Checklist(
+            id='yvrr_chkbox',
             options=[
-            {'label': 'Seasonally adjusted data', 'value': 'adj'},
-            {'label': 'Raw data', 'value': 'raw'}
+                {'label': 'YVR raw', 'value': 'yvrr'}
             ],
-            value='adj'
+            value=['yvrr']
         ),
-    ], style={'width': '48%', 'display': 'inline-block'}),
-
-# Done this way to make easier to set appropriate y-axis limits
-# Could use sliders commented out above if y-axis limits are set by calculating range for years-span
-     html.Div([
-       # dcc.Markdown(''' 
-       # _Choose first or last 5 years of data_         
-       # '''),
-         dcc.RadioItems(
-            id='zone',
+        dcc.Checklist(
+            id='yvrs_chkbox',
             options=[
-            {'label': '1st 5 years', 'value': '1st5yrs'},
-            {'label': 'last 5 years', 'value': 'last5yrs'},
-            {'label': 'All data', 'value': 'alldata'}
+                {'label': 'YVR smoothed', 'value': 'yvrs'}
             ],
-            value='1st5yrs'
+            value=[]
         ),
-    ], style={'width': '48%', 'display': 'inline-block'}),
+        dcc.Checklist(
+            id='yvrm_chkbox',
+            options=[
+                {'label': 'YVR MDA8', 'value': 'yvrm'}
+            ],
+            value=[]
+        ),
+    ], style={'width': '30%', 'display': 'inline-block'}),
+    html.Div([
+        dcc.Markdown('''
+        **Select Abb. components**
+        '''),
+        dcc.Checklist(
+            id='abbr_chkbox',
+            options=[
+                {'label': 'Abb raw', 'value': 'abbr'}
+            ],
+            value=[]
+        ),
+        dcc.Checklist(
+            id='abbs_chkbox',
+            options=[
+                {'label': 'AbbR smoothed', 'value': 'abbs'}
+            ],
+            value=[]
+        ),
+        dcc.Checklist(
+            id='abbm_chkbox',
+            options=[
+                {'label': 'Abb MDA8', 'value': 'abbm'}
+            ],
+            value=[]
+        ),
+    ], style={'width': '30%', 'display': 'inline-block'}),
+    html.Div([
+        dcc.Markdown('''
+        Plot type for Abbotsford data only
+        '''),
+        dcc.Dropdown(
+            id='linetype',
+            options=[
+                {'label': 'Lines', 'value': 'lines'},
+                {'label': 'Markers', 'value': 'markers'},
+                {'label': 'Lines & markers', 'value': 'lines+markers'}
+            ],
+            value='lines'
+        ),
+    ], style={'width': '30%', 'display': 'inline-block'}),
 
-# after controls, place plot
-    dcc.Graph(id='graph'),
+# after controls, place the figure
+    dcc.Graph(id='indicator-graphic'),
 
-# closing text
+# then the text for instruction or to define the assignment.
     dcc.Markdown('''
-    -------
-
-    ### Discussion
-
-    Within small enough regions, the data follow an approximately linear trend, 
-    so a linear model has some predictive power. To consider these questions, 
-    revisit the linear fit for "early" and "recent" 5 year periods.
-    
-    1. Out to which year would you trust the model built with the data from 1958 - 1963? 
-    2. Where does it start to break down?
-    3. How far out would you trust our predictions with data from 2015 - 2020? Would you trust our model to predict CO$_2$ in the year 2050? 
-    4. How might you approach building a model to fit all of our data? 
-    5. Given what the "raw data" look like, what do you think "seasonaly adjusted" means? 
-    6. Use the graph's "Camera" icon to make a PNG file of your graph with all data and linear model fitting the first 5 years.
-    7. Do the same for your graph with linear model fitting the last 5 years of data. Hand both in for assessment. 
-
-    ### Attribution
-    
-    * Derived from [L. Heagy's presentation](https://ubc-dsci.github.io/jupyterdays/sessions/heagy/widgets-and-dashboards.html) at UBC's Jupyter Days 2020, which in turn is adapted from the [Intro-Jupyter tutorial from ICESat-2Hackweek](https://github.com/ICESAT-2HackWeek/intro-jupyter), which has contributions from: [Shane Grigsby (@espg)](https://github.com/espg), [Lindsey Heagy (@lheagy)](https://github.com/lheagy), 
-    [Yara Mohajerani (@yaramohajerani)](https://github.com/yaramohajerani), 
-    and [Fernando Pérez (@fperez)](https://github.com/fperez). 
-    * This version, code by F. Jones.
-    * Original data are at the [Scripps CO2 program](https://scrippsco2.ucsd.edu/data/atmospheric_co2/primary_mlo_co2_record.html). See the NOAA [Global Monitoring Laboratory](https://www.esrl.noaa.gov/gmd/ccgg/trends/) for additional details.
-    
-    '''),
+        ## Usage for teaching and learning
+        Here are a few examples of questions that could be posed in class, on your own, or as an assignment. Choices will depend on whether this dashboard is being used to compare ozone levels at a coastal location to those further inland, or whether the purpose is to explore the challenges and potential for working with "messy" data sets. 
+        1. Plot just one raw data set. How much variation is there over the whole year? 
+        2. Use zoom and scrolling functionality to estimate daily variability of this parameter. 
+        3. What times during the year seem to have lowest ozone levels? Highest Ozone levels? How difficult is it to make these judgements 
+        4. Plot two raw data sets. Which site appears to experience higher ozone events? At what time of year? Why might that be? 
+        5. Are ozone variations easier to "see" by processing data with a 7-day average or by calcuating the maximum daily 8-hr average? 
+        6. Which of these two processing options makes it easier (or more effective) to compare these two stations stations? Why? 
+        7. Look closely at a day or two of smoothed and mda8 data. You should see they appear to be not quite "lined up". Why is this? _{{Because smoothed values are hourly wherease mda8 is a daily value assigned to the date at "0" hours. So the mda8 peak may not match up with a smoothed hourly peak. Most daily peaks are in the afternoon, especially in the summer.}}_
+        8. many other ideas ...
+        ---
+        ## Attribution
+        * Data used here are hourly ozone (parts per billion) for 2017 only, from 2 of many monitoring stations. Full datasets can be found at the BC Data Catalogue, [Air Quality Monitoring: Verified Hourly Data](https://catalogue.data.gov.bc.ca/dataset/77eeadf4-0c19-48bf-a47a-fa9eef01f409), licensed under the [Open Government Licence – British Columbia](https://www2.gov.bc.ca/gov/content/data/open-data/open-government-licence-bc). For more information about these data and their source, see the [Status of Ground-Level Ozone in B.C. (2015-2017)](http://www.env.gov.bc.ca/soe/indicators/air/ozone.html) web page.
+        * The idea is derived from a discussion between Tara Ivanochko and Rivkah Gardner-Frolick <rivkahgf@gmail.com> who uses the complete dataset as part of a [Python tutorial](https://colab.research.google.com/drive/1DO0ICvInsr74vnl3AcPBoGtJyNrV-J8F?usp=sharing#scrollTo=a5l7UD_njHPv) on importing modules, importing data, plotting timeseries and scatter plots.
+        * Code by [Francis Jones](https://www.eoas.ubc.ca/people/francisjones).  
+                ''')
 ], style={'width': '900px'}
 )
 
-# end of layout and definition of controls.
-##################################
 # The callback function with it's app.callback wrapper.
 @app.callback(
-    Output('graph', 'figure'),
-    Input('line_slope', 'value'),
-    Input('line_intcpt', 'value'),
-    Input('Data_type', 'value'),
-#    Input('start', 'value'),
-#    Input('end', 'value'),
-    Input('zone', 'value'),
+    Output('indicator-graphic', 'figure'),
+    Input('yvrr_chkbox', 'value'),
+    Input('yvrs_chkbox', 'value'),
+    Input('yvrm_chkbox', 'value'),
+    Input('abbr_chkbox', 'value'),
+    Input('abbs_chkbox', 'value'),
+    Input('abbm_chkbox', 'value'),
+    Input('linetype', 'value'),
     )
-#def update_graph(line_slope, line_intcpt, Data_type, start, end, zone):
-def update_graph(line_slope, line_intcpt, Data_type, zone):
-# construct all the figure's components
-    plot = go.Figure()
-
-    l1 = line_slope * (co2_data.date - np.min(co2_data.date)) + line_intcpt
-
-    if Data_type == 'raw':
-        plot.add_trace(go.Scatter(x=co2_data.date, y=co2_data.raw_co2, mode='markers',
-            line=dict(color='MediumTurquoise'), name="CO2"))
-    if Data_type == 'adj':
-        plot.add_trace(go.Scatter(x=co2_data.date, y=co2_data.seasonally_adjusted, mode='markers',
-            line=dict(color='MediumTurquoise'), name="CO2"))
+def update_graph(yvrr_chkbox, yvrs_chkbox, yvrm_chkbox, abbr_chkbox, abbs_chkbox, abbm_chkbox, linetype):
+# constructing all the figure's components
+    fig = go.Figure()
+    if yvrr_chkbox == ['yvrr']:
+        fig.add_trace(go.Scatter(x=all_O3.index, y=all_O3.YVR_ppb,
+                    mode='lines', line=dict(color='MediumTurquoise'), name="YVR raw"))
+        fig.layout.title = "Vancouver Airport"
+    if abbr_chkbox == ['abbr']:
+        fig.add_trace(go.Scatter(x=all_O3.index, y=all_O3.Abbotsford_ppb,
+                    mode=linetype, line=dict(color='SandyBrown'), name="Abb raw"))
+        fig.layout.title = "Abbotsford"
+    if yvrs_chkbox == ['yvrs']:
+        fig.add_trace(go.Scatter(x=all_O3.index, y=all_O3.YVR_smoothed, 
+                    mode="lines", line=dict(color='green'), name="YVR 7-day average"))
+        fig.layout.title = "Vancouver Airport"
+    if abbs_chkbox == ['abbs']:
+        fig.add_trace(go.Scatter(x=all_O3.index, y=all_O3.Abb_smoothed, 
+                    mode=linetype, line=dict(color='red'), name="Abb 7-day average"))
+        fig.layout.title = "Abbotsford"
+# different "x" because mda8 has daily values, not hourly values. 
+    if yvrm_chkbox == ['yvrm']:  
+        fig.add_trace(go.Scatter(x=YVR_max8hrsavg.index, y=YVR_max8hrsavg, 
+                    mode="lines", line=dict(color='blue', width=2), name="YVR max daily 8hr avg"))
+        fig.layout.title = "Vancouver Airport"
+    if abbm_chkbox == ['abbm']:
+        fig.add_trace(go.Scatter(x=YVR_max8hrsavg.index, y=Abb_max8hrsavg, 
+                    mode=linetype, line=dict(color='firebrick', width=2), name="Abb max daily 8hr avg"))
+        fig.layout.title = "Abbotsford"
     
-    plot.add_trace(go.Scatter(x=co2_data.date, y=l1, mode='lines',
-        line=dict(color='SandyBrown'), name="linear fit"))
-    
-    plot.update_layout(xaxis_title='Year', yaxis_title='ppm')
-#    plot.update_xaxes(range=[start, end])
-    
-    if zone == '1st5yrs':
-        plot.update_xaxes(range=[1958, 1963])
-        plot.update_yaxes(range=[312, 322])
+    if (yvrr_chkbox == ['yvrr'] or yvrs_chkbox == ['yvrs'] or yvrm_chkbox == ['yvrm']) and (abbr_chkbox == ['abbr']or abbs_chkbox == ['abbs'] or abbm_chkbox == ['abbm']):
+        fig.layout.title = "Vancouver Airport and Abbotsford"
+    fig.update_layout(xaxis_title='Time', yaxis_title='ppb')
 
-    if zone == 'last5yrs':
-        plot.update_xaxes(range=[2015, 2020])
-        plot.update_yaxes(range=[395, 415])
-    
-    if zone == 'alldata':
-        plot.update_xaxes(range=[1955, 2023])
-        plot.update_yaxes(range=[310, 440])
+    return fig    
 
-    predicted_co2 = predict_co2(line_slope, line_intcpt, 1958, 2030)
-    plot.layout.title = f"Predicted CO2 for {2030}: {predicted_co2:1.2f} ppm."
-
-    return plot
-
+# dubugging on causes the active page to refresh as soon as edits are saved. 
+# Python will quite if there are syntax errors, but if not the app will 
+# throw error messages directly into the running browser window. 
+# This is a very efficient workflow.
 if __name__ == '__main__':
     app.run_server(debug=True)
+
+# I'm not sure if it's more efficient to turn off debug; needs researching. 
+    #app.run_server(debug=False)
